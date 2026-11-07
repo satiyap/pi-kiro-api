@@ -17,6 +17,67 @@ import type {
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
 
+// pi >= 0.8x carries the system prompt and the tool set as `role: "system"`
+// messages inside context.messages (content + named `sections`, plus
+// `toolsAdded`/`toolsRemoved`), and may leave context.systemPrompt/tools empty.
+// Kiro has no system role: anything that is not user/assistant was falling
+// through to the tool-result branch and produced a toolResult with no
+// toolUseId, which Kiro rejects with 400 "Invalid tool use format." Fold the
+// system messages back into a system prompt + tool list (same semantics as
+// pi-ai's getCurrentSystemMessage/getCurrentTools) and drop them.
+interface SystemLikeMessage {
+  role: "system";
+  content?: string | Array<{ type: string; text?: string }>;
+  sections?: Record<string, string | null>;
+  toolsAdded?: Tool[];
+  toolsRemoved?: Array<{ name: string }>;
+}
+
+function systemContentText(content: SystemLikeMessage["content"]): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((b) => b.type === "text" && typeof b.text === "string")
+    .map((b) => b.text as string)
+    .join("\n");
+}
+
+export function splitSystemMessages(
+  messages: Message[],
+  systemPrompt: string | undefined,
+  tools: Tool[] | undefined,
+): { systemPrompt: string; tools: Tool[] | undefined; messages: Message[] } {
+  const rest: Message[] = [];
+  const content: string[] = [];
+  const sections = new Map<string, string>();
+  const toolMap = new Map<string, Tool>();
+  let sawSystem = false;
+  for (const msg of messages) {
+    if ((msg as unknown as { role: string }).role !== "system") {
+      rest.push(msg);
+      continue;
+    }
+    sawSystem = true;
+    const sm = msg as unknown as SystemLikeMessage;
+    const text = systemContentText(sm.content);
+    if (text.length > 0) content.push(text);
+    for (const [name, value] of Object.entries(sm.sections ?? {})) {
+      if (value === null) sections.delete(name);
+      else sections.set(name, value);
+    }
+    for (const t of sm.toolsRemoved ?? []) toolMap.delete(t.name);
+    for (const t of sm.toolsAdded ?? []) toolMap.set(t.name, t);
+  }
+  if (!sawSystem) return { systemPrompt: systemPrompt ?? "", tools, messages };
+  const parts = [systemPrompt ?? "", ...content, ...sections.values()].filter((p) => p.length > 0);
+  const mergedTools = tools && tools.length > 0 ? tools : [...toolMap.values()];
+  return {
+    systemPrompt: parts.join("\n\n"),
+    tools: mergedTools.length > 0 ? mergedTools : undefined,
+    messages: rest,
+  };
+}
+
 /** Drop assistant messages that ended in error/aborted — partial turns
  *  shouldn't be replayed. */
 export function normalizeMessages(messages: Message[]): Message[] {

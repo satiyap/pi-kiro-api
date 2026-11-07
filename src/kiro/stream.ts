@@ -45,6 +45,7 @@ import {
   type KiroToolSpec,
   type KiroUserInputMessage,
   normalizeMessages,
+  splitSystemMessages,
   parseToolArgs,
   TOOL_RESULT_LIMIT,
   truncate,
@@ -243,7 +244,14 @@ export function streamKiro(
     let hiddenMarkerEmitted = false;
 
     try {
-      const apiKey = options?.apiKey;
+      // Prefer the environment. pi's handling of the registered `apiKey`
+      // string changed between releases: 0.73 resolves a bare env-var NAME
+      // and sends "$KIRO_API_KEY" literally, while 0.87 resolves "$KIRO_API_KEY"
+      // templates and sends a bare name literally. Either mismatch is a 403
+      // "bearer token invalid". The key is required in the environment at
+      // registration anyway, so reading it here works on every pi version.
+      const envKey = globalThis.process?.env?.KIRO_API_KEY;
+      const apiKey = (typeof envKey === "string" && envKey.trim()) || options?.apiKey;
       if (!apiKey) {
         throw new Error("Kiro API key not set. Set KIRO_API_KEY in your environment.");
       }
@@ -271,7 +279,10 @@ export function streamKiro(
         sessionId: options?.sessionId,
       });
 
-      let systemPrompt = context.systemPrompt ?? "";
+      const split = splitSystemMessages(context.messages, context.systemPrompt, context.tools);
+      const ctxTools = split.tools;
+      const ctxMessages = split.messages;
+      let systemPrompt = split.systemPrompt;
       // Skip the `<thinking_mode>` directive when the provider hides
       // reasoning — the directive is a no-op there and costs prompt tokens.
       if (thinkingEnabled && !reasoningHidden) {
@@ -294,7 +305,7 @@ export function streamKiro(
       while (retryCount <= MAX_RETRIES) {
         if (options?.signal?.aborted) throw options.signal.reason;
 
-        const normalized = normalizeMessages(context.messages);
+        const normalized = normalizeMessages(ctxMessages);
         const {
           history,
           systemPrepended,
@@ -399,11 +410,11 @@ export function streamKiro(
         }
 
         let uimc: { toolResults?: KiroToolResult[]; tools?: KiroToolSpec[] } | undefined;
-        if (currentToolResults.length > 0 || (context.tools && context.tools.length > 0)) {
+        if (currentToolResults.length > 0 || (ctxTools && ctxTools.length > 0)) {
           uimc = {};
           if (currentToolResults.length > 0) uimc.toolResults = currentToolResults;
-          if (context.tools?.length) {
-            uimc.tools = convertToolsToKiro(context.tools);
+          if (ctxTools?.length) {
+            uimc.tools = convertToolsToKiro(ctxTools);
           }
         }
 

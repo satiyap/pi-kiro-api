@@ -45,7 +45,9 @@ export default async function registerKiroApiKeyProvider(pi: {
   pi.registerProvider(PROVIDER_ID, {
     name: "Kiro (API Key)",
     baseUrl,
-    apiKey: "$KIRO_API_KEY",
+    // pi resolves a bare env var name here; "$KIRO_API_KEY" is sent literally
+    // as the bearer token, so every request 403s after discovery succeeds.
+    apiKey: "KIRO_API_KEY",
     api: "kiro-api",
     models,
     streamSimple: streamKiro,
