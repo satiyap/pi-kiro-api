@@ -1,6 +1,6 @@
 {
   "name": "pi-kiro-api",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Kiro API-key provider for pi using KIRO_API_KEY. Vendors pi-kiro's streaming core (MIT) with no runtime dependencies.",
   "type": "module",
   "license": "MIT",
